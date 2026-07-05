@@ -128,6 +128,28 @@ async function requireSession(env, request, role) {
   return session;
 }
 
+async function findOrCreateGuestCustomer(env, guest) {
+  const email = normalizeEmail(guest?.email);
+  const name = String(guest?.name || "Guest Client").trim();
+  if (!email) return null;
+  const existing = await env.DB.prepare(
+    "SELECT id, role, email, name FROM users WHERE email = ?",
+  ).bind(email).first();
+  if (existing?.role === "customer") return existing;
+  if (existing) return null;
+  const user = {
+    id: randomId("guest"),
+    role: "customer",
+    email,
+    name,
+    password_hash: await hashPassword(randomId("guest_password")),
+  };
+  await env.DB.prepare(
+    "INSERT INTO users (id, role, email, name, password_hash) VALUES (?, ?, ?, ?, ?)",
+  ).bind(user.id, user.role, user.email, user.name, user.password_hash).run();
+  return { id: user.id, role: user.role, email: user.email, name: user.name };
+}
+
 function publicProduct(product) {
   return {
     id: product.id,
@@ -209,8 +231,11 @@ async function handleCustomerAuth(env, request, segments) {
 
   if (request.method === "POST" && action === "orders") {
     const session = await requireSession(env, request, "customer");
-    if (!session) return json({ error: "Register or login before checkout." }, { status: 401 });
     const body = await readJson(request);
+    const orderCustomer = session || await findOrCreateGuestCustomer(env, body.guest);
+    if (!orderCustomer) {
+      return json({ error: "Customer login or guest email is required." }, { status: 400 });
+    }
     const items = Array.isArray(body.items) ? body.items : [];
     if (!items.length) return json({ error: "Cart is empty." }, { status: 400 });
 
@@ -231,7 +256,7 @@ async function handleCustomerAuth(env, request, segments) {
     const total = subtotal + shipping;
     await env.DB.prepare(
       "INSERT INTO orders (id, customer_id, subtotal, shipping, total, status) VALUES (?, ?, ?, ?, ?, ?)",
-    ).bind(orderId, session.id, subtotal, shipping, total, "pending_payment").run();
+    ).bind(orderId, orderCustomer.id, subtotal, shipping, total, "pending_payment").run();
     for (const item of checkedItems) {
       const { product, quantity } = item;
       await env.DB.prepare(
@@ -239,7 +264,16 @@ async function handleCustomerAuth(env, request, segments) {
       ).bind(randomId("item"), orderId, product.id, quantity, product.price, product.name, product.image).run();
       await env.DB.prepare("UPDATE products SET stock = stock - ? WHERE id = ?").bind(quantity, product.id).run();
     }
-    return json({ order: { id: orderId, subtotal, shipping, total, status: "pending_payment" } });
+    return json({
+      order: {
+        id: orderId,
+        subtotal,
+        shipping,
+        total,
+        status: "pending_payment",
+        mode: session ? "customer" : "guest",
+      },
+    });
   }
 
   return json({ error: "Not found" }, { status: 404 });
@@ -346,12 +380,17 @@ async function handlePayments(env, request, segments) {
   if (request.method !== "POST" || segments[1] !== "checkout") {
     return json({ error: "Not found" }, { status: 404 });
   }
-  const session = await requireSession(env, request, "customer");
-  if (!session) return json({ error: "Customer login required." }, { status: 401 });
   const body = await readJson(request);
+  const session = await requireSession(env, request, "customer");
+  const guestEmail = normalizeEmail(body.guestEmail);
+  const guestCustomer = !session && guestEmail
+    ? await env.DB.prepare("SELECT id, email FROM users WHERE email = ? AND role = 'customer'").bind(guestEmail).first()
+    : null;
+  const customerId = session?.id || guestCustomer?.id;
+  if (!customerId) return json({ error: "Customer login or guest email is required." }, { status: 401 });
   const order = await env.DB.prepare(
     "SELECT * FROM orders WHERE id = ? AND customer_id = ?",
-  ).bind(body.orderId, session.id).first();
+  ).bind(body.orderId, customerId).first();
   if (!order) return json({ error: "Order not found." }, { status: 404 });
   const paymentId = randomId("pay");
   const provider = String(body.provider || "stripe");
