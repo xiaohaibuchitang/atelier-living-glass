@@ -11,54 +11,72 @@ const categories = [
   "Accessories",
 ];
 
-const products = [
+const initialProducts = [
   {
+    id: "sofa-glasswell",
     name: "Glasswell Modular Sofa",
     category: "Sofas",
-    price: "$4,980",
+    price: 4980,
     note: "4 configurations",
     image: asset("assets/product-sofa.png"),
     material: "Italian boucle, kiln-dried frame, low-profile stone plinth",
+    stock: 12,
+    status: "Live",
   },
   {
+    id: "chair-milo",
     name: "Milo Lounge Chair",
     category: "Seating",
-    price: "$1,950",
+    price: 1950,
     note: "3 finishes",
     image: asset("assets/product-chair.png"),
     material: "Olive wool blend, smoked steel swivel base",
+    stock: 18,
+    status: "Live",
   },
   {
+    id: "lamp-aurora",
     name: "Aurora Floor Lamp",
     category: "Lighting",
-    price: "$1,280",
+    price: 1280,
     note: "Dimmable warm LED",
     image: asset("assets/product-lamp.png"),
     material: "Translucent shade, graphite column, weighted stone base",
+    stock: 10,
+    status: "Live",
   },
   {
+    id: "appliance-lumiere",
     name: "Lumiere Coffee Machine",
     category: "Appliances",
-    price: "$699",
+    price: 699,
     note: "15 bar pressure",
     image: asset("assets/product-espresso.png"),
     material: "Brushed steel, quiet pump, compact counter footprint",
+    stock: 26,
+    status: "Live",
   },
   {
+    id: "appliance-purelite",
     name: "Purelite Air Purifier",
     category: "Appliances",
-    price: "$449",
+    price: 449,
     note: "H13 HEPA filter",
     image: asset("assets/product-purifier.png"),
     material: "Graphite shell, low-noise circulation, washable pre-filter",
+    stock: 34,
+    status: "Live",
   },
   {
+    id: "kettle-vera",
     name: "Vera Kettle",
     category: "Accessories",
-    price: "$189",
+    price: 189,
     note: "Temperature control",
     image: asset("assets/product-kettle.png"),
     material: "Matte champagne finish, precision spout, insulated handle",
+    stock: 40,
+    status: "Live",
   },
 ];
 
@@ -107,23 +125,67 @@ const spaces = [
   },
 ];
 
+const paymentMethods = [
+  "Card checkout",
+  "Stripe ready",
+  "Bank transfer",
+  "WeChat or Alipay slot",
+];
+
 const serviceItems = [
   ["Complimentary Delivery", "White-glove delivery in selected regions."],
   ["Designed to Last", "Quality materials and timeless design, built to endure."],
-  ["2-Year Warranty", "Peace of mind with comprehensive coverage on every product."],
-  ["Easy Returns", "30-day returns on most furniture and accessories."],
+  ["Merchant Console", "Product, inventory, and order workflows are ready for backend wiring."],
+  ["Secure Checkout", "Payment interface prepared for Stripe, WeChat Pay, or Alipay integration."],
 ];
+
+const formatPrice = (value) =>
+  new Intl.NumberFormat("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  }).format(value);
 
 export function App() {
   const [activeCategory, setActiveCategory] = useState("All Products");
   const [menuOpen, setMenuOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
   const [saved, setSaved] = useState(() => new Set());
+  const [products, setProducts] = useState(initialProducts);
+  const [cart, setCart] = useState([]);
+  const [session, setSession] = useState(null);
+  const [loginRole, setLoginRole] = useState("customer");
+  const [loginOpen, setLoginOpen] = useState(false);
+  const [checkoutOpen, setCheckoutOpen] = useState(false);
+  const [orderState, setOrderState] = useState("idle");
+  const [merchantForm, setMerchantForm] = useState({
+    name: "Nord Air Circulator",
+    category: "Appliances",
+    price: "329",
+    stock: "22",
+    note: "Quiet airflow",
+    material: "Compact smart fan with matte graphite shell",
+  });
 
+  const liveProducts = products.filter((product) => product.status === "Live");
   const filteredProducts = useMemo(() => {
-    if (activeCategory === "All Products") return products;
-    return products.filter((product) => product.category === activeCategory);
-  }, [activeCategory]);
+    const source = activeCategory === "All Products"
+      ? liveProducts
+      : liveProducts.filter((product) => product.category === activeCategory);
+    return source;
+  }, [activeCategory, liveProducts]);
+
+  const cartItems = cart
+    .map((item) => {
+      const product = products.find((entry) => entry.id === item.productId);
+      return product ? { ...product, quantity: item.quantity } : null;
+    })
+    .filter(Boolean);
+
+  const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
+  const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
+  const shipping = subtotal > 0 ? 180 : 0;
+  const total = subtotal + shipping;
 
   function toggleSaved(productName) {
     setSaved((current) => {
@@ -137,6 +199,93 @@ export function App() {
     });
   }
 
+  function addToCart(productId) {
+    setCart((current) => {
+      const existing = current.find((item) => item.productId === productId);
+      if (existing) {
+        return current.map((item) =>
+          item.productId === productId
+            ? { ...item, quantity: item.quantity + 1 }
+            : item,
+        );
+      }
+      return [...current, { productId, quantity: 1 }];
+    });
+  }
+
+  function changeQuantity(productId, direction) {
+    setCart((current) =>
+      current
+        .map((item) =>
+          item.productId === productId
+            ? { ...item, quantity: Math.max(0, item.quantity + direction) }
+            : item,
+        )
+        .filter((item) => item.quantity > 0),
+    );
+  }
+
+  function loginAs(role) {
+    setSession({
+      role,
+      name: role === "merchant" ? "Atelier Merchant" : "Private Client",
+    });
+    setLoginOpen(false);
+  }
+
+  function updateStock(productId, direction) {
+    setProducts((current) =>
+      current.map((product) =>
+        product.id === productId
+          ? { ...product, stock: Math.max(0, product.stock + direction) }
+          : product,
+      ),
+    );
+  }
+
+  function toggleStatus(productId) {
+    setProducts((current) =>
+      current.map((product) =>
+        product.id === productId
+          ? { ...product, status: product.status === "Live" ? "Hidden" : "Live" }
+          : product,
+      ),
+    );
+  }
+
+  function addMerchantProduct(event) {
+    event.preventDefault();
+    const nextProduct = {
+      id: `merchant-${Date.now()}`,
+      name: merchantForm.name,
+      category: merchantForm.category,
+      price: Number(merchantForm.price) || 0,
+      note: merchantForm.note,
+      image: asset("assets/product-purifier.png"),
+      material: merchantForm.material,
+      stock: Number(merchantForm.stock) || 0,
+      status: "Live",
+    };
+    setProducts((current) => [nextProduct, ...current]);
+    setMerchantForm({
+      name: "",
+      category: "Appliances",
+      price: "",
+      stock: "",
+      note: "",
+      material: "",
+    });
+  }
+
+  function completePayment(event) {
+    event.preventDefault();
+    setOrderState("processing");
+    window.setTimeout(() => {
+      setOrderState("paid");
+      setCart([]);
+    }, 700);
+  }
+
   return (
     <main className="site-shell">
       <header className="topbar">
@@ -147,16 +296,22 @@ export function App() {
         <nav className={menuOpen ? "nav nav-open" : "nav"} aria-label="Primary">
           <a href="#collection">Furniture</a>
           <a href="#collection">Appliances</a>
-          <a href="#collection">Collections</a>
+          <a href="#commerce">Commerce</a>
+          <a href="#merchant">Merchant</a>
           <a href="#spaces">Spaces</a>
           <a href="#craft">Materials</a>
-          <a href="#journal">Journal</a>
         </nav>
         <div className="utility">
-          <button className="text-button" type="button">Search</button>
-          <button className="text-button" type="button">Account</button>
-          <button className="bag-button" type="button">
-            Bag <span>{saved.size}</span>
+          <button className="text-button" type="button" onClick={() => setLoginOpen(true)}>
+            {session ? session.name : "Login"}
+          </button>
+          {session ? (
+            <button className="text-button" type="button" onClick={() => setSession(null)}>
+              Sign out
+            </button>
+          ) : null}
+          <button className="bag-button" type="button" onClick={() => setCheckoutOpen(true)}>
+            Bag <span>{cartCount}</span>
           </button>
           <button
             className="menu-button"
@@ -174,31 +329,31 @@ export function App() {
         <div className="hero-shade" />
         <div className="hero-content">
           <div className="hero-copy">
-            <p className="eyebrow">Furniture and small appliances</p>
+            <p className="eyebrow">Furniture, appliances, and commerce</p>
             <h1>Design that lives beautifully.</h1>
             <p>
-              A premium web template for home objects, blending real product
-              photography, CGI glass layers, and tactile material storytelling.
+              A premium home-commerce template with separate customer and merchant
+              journeys, product operations, cart logic, and payment-ready checkout.
             </p>
             <div className="hero-actions">
-              <a className="primary-action" href="#collection">Explore collection</a>
-              <a className="secondary-action" href="#craft">View image methods</a>
+              <a className="primary-action" href="#collection">Shop collection</a>
+              <a className="secondary-action" href="#merchant">Open merchant console</a>
             </div>
           </div>
 
-          <aside className="glass-panel hero-panel" aria-label="Featured material story">
-            <p className="panel-label">Material story</p>
-            <h2>Premium Italian boucle fabric</h2>
+          <aside className="glass-panel hero-panel" aria-label="Commerce status">
+            <p className="panel-label">Live commerce layer</p>
+            <h2>Separate portals for customers and merchants.</h2>
             <p>
-              Soft texture, enduring performance, and a restrained palette for
-              furniture that stays calm in the room.
+              Customers can save items, build a cart, and enter checkout.
+              Merchants can publish products, manage stock, and review order flow.
             </p>
-            <button className="link-button" type="button" onClick={() => setSelectedProduct(products[0])}>
-              View details
+            <button className="link-button" type="button" onClick={() => setLoginOpen(true)}>
+              Choose login type
             </button>
             <div className="panel-divider" />
-            <p className="panel-label">Designed to last</p>
-            <p className="panel-statement">Modular. Adaptable. Endlessly comfortable.</p>
+            <p className="panel-label">Payment status</p>
+            <p className="panel-statement">Demo checkout now. Real payment gateway next.</p>
           </aside>
         </div>
 
@@ -216,18 +371,41 @@ export function App() {
         </div>
       </section>
 
+      <section id="commerce" className="commerce-band">
+        <div>
+          <p className="eyebrow">Account structure</p>
+          <h2>Two entrances, one luxury storefront.</h2>
+        </div>
+        <div className="portal-grid">
+          <article className="portal-card">
+            <span>Customer</span>
+            <h3>Browse, save, cart, checkout</h3>
+            <p>Designed for private clients purchasing furniture and compact home appliances.</p>
+            <button type="button" onClick={() => loginAs("customer")}>Enter as customer</button>
+          </article>
+          <article className="portal-card merchant">
+            <span>Merchant</span>
+            <h3>Products, stock, orders</h3>
+            <p>Designed for merchants who need clean catalog control without visual clutter.</p>
+            <button type="button" onClick={() => loginAs("merchant")}>Enter as merchant</button>
+          </article>
+        </div>
+      </section>
+
       <section id="collection" className="section collection-section">
         <div className="section-heading">
           <div>
             <p className="eyebrow">Our collection</p>
             <h2>Thoughtful pieces for modern living.</h2>
           </div>
-          <a href="#spaces" className="section-link">View spaces</a>
+          <button className="section-link" type="button" onClick={() => setCheckoutOpen(true)}>
+            Review cart
+          </button>
         </div>
 
         <div className="product-grid">
           {filteredProducts.map((product) => (
-            <article key={product.name} className="product-card">
+            <article key={product.id} className="product-card">
               <button
                 className="save-button"
                 type="button"
@@ -239,14 +417,126 @@ export function App() {
               <button className="product-image-button" type="button" onClick={() => setSelectedProduct(product)}>
                 <img src={product.image} alt={product.name} />
               </button>
-              <button className="product-info" type="button" onClick={() => setSelectedProduct(product)}>
-                <p>{product.category}</p>
-                <h3>{product.name}</h3>
-                <span>{product.price}</span>
-                <small>{product.note}</small>
-              </button>
+              <div className="product-info">
+                <button type="button" onClick={() => setSelectedProduct(product)}>
+                  <p>{product.category}</p>
+                  <h3>{product.name}</h3>
+                  <span>{formatPrice(product.price)}</span>
+                  <small>{product.note}</small>
+                </button>
+                <button className="cart-action" type="button" onClick={() => addToCart(product.id)}>
+                  Add to bag
+                </button>
+              </div>
             </article>
           ))}
+        </div>
+      </section>
+
+      <section id="merchant" className="merchant-section">
+        <div className="merchant-header">
+          <div>
+            <p className="eyebrow">Merchant console</p>
+            <h2>Product operations without leaving the brand world.</h2>
+            <p>
+              This prototype shows the merchant journey. Real accounts, database
+              records, and payment webhooks can be wired in the next backend pass.
+            </p>
+          </div>
+          <div className="merchant-status">
+            <span>{session?.role === "merchant" ? "Merchant active" : "Merchant locked"}</span>
+            <button type="button" onClick={() => loginAs("merchant")}>Open merchant mode</button>
+          </div>
+        </div>
+
+        <div className={session?.role === "merchant" ? "merchant-console" : "merchant-console locked"}>
+          <form className="merchant-form" onSubmit={addMerchantProduct}>
+            <h3>Add product</h3>
+            <label>
+              Product name
+              <input
+                value={merchantForm.name}
+                onChange={(event) => setMerchantForm({ ...merchantForm, name: event.target.value })}
+                required
+              />
+            </label>
+            <div className="form-row">
+              <label>
+                Category
+                <select
+                  value={merchantForm.category}
+                  onChange={(event) => setMerchantForm({ ...merchantForm, category: event.target.value })}
+                >
+                  {categories.slice(1).map((category) => (
+                    <option key={category}>{category}</option>
+                  ))}
+                </select>
+              </label>
+              <label>
+                Price
+                <input
+                  type="number"
+                  min="1"
+                  value={merchantForm.price}
+                  onChange={(event) => setMerchantForm({ ...merchantForm, price: event.target.value })}
+                  required
+                />
+              </label>
+            </div>
+            <div className="form-row">
+              <label>
+                Stock
+                <input
+                  type="number"
+                  min="0"
+                  value={merchantForm.stock}
+                  onChange={(event) => setMerchantForm({ ...merchantForm, stock: event.target.value })}
+                  required
+                />
+              </label>
+              <label>
+                Note
+                <input
+                  value={merchantForm.note}
+                  onChange={(event) => setMerchantForm({ ...merchantForm, note: event.target.value })}
+                  required
+                />
+              </label>
+            </div>
+            <label>
+              Material story
+              <textarea
+                value={merchantForm.material}
+                onChange={(event) => setMerchantForm({ ...merchantForm, material: event.target.value })}
+                required
+              />
+            </label>
+            <button type="submit">Publish product</button>
+          </form>
+
+          <div className="inventory-panel">
+            <div className="inventory-head">
+              <h3>Inventory</h3>
+              <span>{products.length} products</span>
+            </div>
+            {products.map((product) => (
+              <article className="inventory-row" key={product.id}>
+                <img src={product.image} alt={product.name} />
+                <div>
+                  <h4>{product.name}</h4>
+                  <p>{product.category} / {formatPrice(product.price)}</p>
+                </div>
+                <div className="stock-control">
+                  <button type="button" onClick={() => updateStock(product.id, -1)}>-</button>
+                  <span>{product.stock}</span>
+                  <button type="button" onClick={() => updateStock(product.id, 1)}>+</button>
+                </div>
+                <button className="status-toggle" type="button" onClick={() => toggleStatus(product.id)}>
+                  {product.status}
+                </button>
+              </article>
+            ))}
+          </div>
         </div>
       </section>
 
@@ -255,11 +545,10 @@ export function App() {
           <p className="eyebrow">Design and craftsmanship</p>
           <h2>Where material meets mastery.</h2>
           <p>
-            The template uses multiple production methods: lifestyle room scenes,
-            isolated product imagery, material macro crops, transparent CGI, and
-            virtual-real composites.
+            The template uses lifestyle room scenes, isolated product imagery,
+            material macro crops, transparent CGI, and virtual-real composites.
           </p>
-          <a href="#journal" className="section-link dark">Discover process</a>
+          <a href="#spaces" className="section-link dark">Discover process</a>
         </div>
         <div className="craft-grid">
           {craftItems.map((item) => (
@@ -297,18 +586,16 @@ export function App() {
         </div>
       </section>
 
-      <section id="journal" className="journal-section">
+      <section className="payment-section">
         <div>
-          <p className="eyebrow">Template system</p>
-          <h2>Built for products with a real material story.</h2>
+          <p className="eyebrow">Payment architecture</p>
+          <h2>Ready for real checkout integration.</h2>
         </div>
-        <form className="newsletter" onSubmit={(event) => event.preventDefault()}>
-          <label htmlFor="email">Request the launch kit</label>
-          <div>
-            <input id="email" type="email" placeholder="studio@example.com" />
-            <button type="submit">Send</button>
-          </div>
-        </form>
+        <div className="payment-methods">
+          {paymentMethods.map((method) => (
+            <span key={method}>{method}</span>
+          ))}
+        </div>
       </section>
 
       <footer className="service-strip">
@@ -319,6 +606,113 @@ export function App() {
           </div>
         ))}
       </footer>
+
+      {loginOpen ? (
+        <div className="modal-layer" role="dialog" aria-label="Login selection">
+          <div className="login-modal">
+            <button className="drawer-close" type="button" onClick={() => setLoginOpen(false)}>
+              Close
+            </button>
+            <p className="eyebrow">Secure access</p>
+            <h2>Choose your portal.</h2>
+            <div className="role-switch">
+              <button
+                className={loginRole === "customer" ? "active" : ""}
+                type="button"
+                onClick={() => setLoginRole("customer")}
+              >
+                Customer
+              </button>
+              <button
+                className={loginRole === "merchant" ? "active" : ""}
+                type="button"
+                onClick={() => setLoginRole("merchant")}
+              >
+                Merchant
+              </button>
+            </div>
+            <form onSubmit={(event) => { event.preventDefault(); loginAs(loginRole); }}>
+              <label>
+                Email
+                <input type="email" defaultValue={loginRole === "merchant" ? "merchant@atelier.demo" : "client@atelier.demo"} />
+              </label>
+              <label>
+                Password
+                <input type="password" defaultValue="demo-access" />
+              </label>
+              <button type="submit">
+                Continue as {loginRole === "merchant" ? "merchant" : "customer"}
+              </button>
+            </form>
+          </div>
+        </div>
+      ) : null}
+
+      {checkoutOpen ? (
+        <div className="modal-layer" role="dialog" aria-label="Checkout">
+          <div className="checkout-modal">
+            <button className="drawer-close" type="button" onClick={() => setCheckoutOpen(false)}>
+              Close
+            </button>
+            <p className="eyebrow">Checkout</p>
+            <h2>{orderState === "paid" ? "Order confirmed." : "Complete your order."}</h2>
+            {orderState === "paid" ? (
+              <div className="success-panel">
+                <p>Your demo payment was accepted. A real gateway can be attached through Stripe, WeChat Pay, or Alipay in the backend phase.</p>
+                <button type="button" onClick={() => { setOrderState("idle"); setCheckoutOpen(false); }}>
+                  Return to store
+                </button>
+              </div>
+            ) : (
+              <div className="checkout-grid">
+                <div className="cart-list">
+                  {cartItems.length ? cartItems.map((item) => (
+                    <article className="cart-row" key={item.id}>
+                      <img src={item.image} alt={item.name} />
+                      <div>
+                        <h3>{item.name}</h3>
+                        <p>{formatPrice(item.price)}</p>
+                        <div className="stock-control">
+                          <button type="button" onClick={() => changeQuantity(item.id, -1)}>-</button>
+                          <span>{item.quantity}</span>
+                          <button type="button" onClick={() => changeQuantity(item.id, 1)}>+</button>
+                        </div>
+                      </div>
+                    </article>
+                  )) : (
+                    <div className="empty-cart">
+                      <p>Your bag is empty.</p>
+                      <button type="button" onClick={() => setCheckoutOpen(false)}>Browse products</button>
+                    </div>
+                  )}
+                </div>
+                <form className="payment-form" onSubmit={completePayment}>
+                  <label>
+                    Payment method
+                    <select defaultValue="Card checkout">
+                      {paymentMethods.map((method) => (
+                        <option key={method}>{method}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label>
+                    Card number
+                    <input inputMode="numeric" placeholder="4242 4242 4242 4242" required={cartItems.length > 0} />
+                  </label>
+                  <div className="total-box">
+                    <span>Subtotal {formatPrice(subtotal)}</span>
+                    <span>Delivery {formatPrice(shipping)}</span>
+                    <strong>Total {formatPrice(total)}</strong>
+                  </div>
+                  <button type="submit" disabled={!cartItems.length || orderState === "processing"}>
+                    {orderState === "processing" ? "Processing" : "Pay demo order"}
+                  </button>
+                </form>
+              </div>
+            )}
+          </div>
+        </div>
+      ) : null}
 
       {selectedProduct ? (
         <div className="detail-drawer" role="dialog" aria-label="Selected product details">
@@ -331,9 +725,12 @@ export function App() {
             <h2>{selectedProduct.name}</h2>
             <p>{selectedProduct.material}</p>
             <div className="drawer-meta">
-              <span>{selectedProduct.price}</span>
+              <span>{formatPrice(selectedProduct.price)}</span>
               <small>{selectedProduct.note}</small>
             </div>
+            <button className="cart-action drawer-cart" type="button" onClick={() => addToCart(selectedProduct.id)}>
+              Add to bag
+            </button>
           </div>
         </div>
       ) : null}
