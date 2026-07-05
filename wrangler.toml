@@ -1,0 +1,9 @@
+name = "atelier-living-glass"
+pages_build_output_dir = "dist"
+compatibility_date = "2026-07-05"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "atelier_living_glass_db"
+database_id = "92500ed4-b208-4017-9b3d-7b384e630e75"
+

@@ -1,17 +1,10 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 
 const asset = (path) => `${import.meta.env.BASE_URL}${path}`;
 
-const categories = [
-  "All Products",
-  "Sofas",
-  "Seating",
-  "Lighting",
-  "Appliances",
-  "Accessories",
-];
+const categories = ["All Products", "Sofas", "Seating", "Lighting", "Appliances", "Accessories"];
 
-const initialProducts = [
+const seedProducts = [
   {
     id: "sofa-glasswell",
     name: "Glasswell Modular Sofa",
@@ -80,33 +73,6 @@ const initialProducts = [
   },
 ];
 
-const craftItems = [
-  {
-    step: "01",
-    title: "Material Integrity",
-    copy: "Macro product photography reveals the touch points that make each surface feel warm, honest, and durable.",
-    image: asset("assets/process-fabric.png"),
-  },
-  {
-    step: "02",
-    title: "Refined Construction",
-    copy: "Close-range framing documents joins, seams, hardware, and ergonomic details with editorial clarity.",
-    image: asset("assets/process-chair-detail.png"),
-  },
-  {
-    step: "03",
-    title: "Intelligent Engineering",
-    copy: "Transparent CGI views explain the appliance core without turning the brand world into a technical diagram.",
-    image: asset("assets/process-transparent-espresso.png"),
-  },
-  {
-    step: "04",
-    title: "Made for Real Life",
-    copy: "Lifestyle composites show the collection at home, balancing practical scale with atmospheric depth.",
-    image: asset("assets/process-lifestyle.png"),
-  },
-];
-
 const spaces = [
   {
     title: "Calm Minimalism",
@@ -125,55 +91,94 @@ const spaces = [
   },
 ];
 
-const paymentMethods = [
-  "Card checkout",
-  "Stripe ready",
-  "Bank transfer",
-  "WeChat or Alipay slot",
-];
-
-const serviceItems = [
-  ["Complimentary Delivery", "White-glove delivery in selected regions."],
-  ["Designed to Last", "Quality materials and timeless design, built to endure."],
-  ["Merchant Console", "Product, inventory, and order workflows are ready for backend wiring."],
-  ["Secure Checkout", "Payment interface prepared for Stripe, WeChat Pay, or Alipay integration."],
-];
-
 const formatPrice = (value) =>
   new Intl.NumberFormat("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
-  }).format(value);
+  }).format(Number(value || 0));
+
+function imageUrl(path) {
+  if (!path) return asset("assets/product-purifier.png");
+  if (path.startsWith("/assets/")) return asset(path.slice(1));
+  return path;
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    credentials: "same-origin",
+    headers: {
+      "content-type": "application/json",
+      ...(options.headers || {}),
+    },
+    ...options,
+  });
+  const data = await response.json().catch(() => ({}));
+  if (!response.ok) {
+    throw new Error(data.error || "Request failed");
+  }
+  return data;
+}
+
+function usePath() {
+  const [path, setPath] = useState(`${window.location.pathname}${window.location.search}`);
+  useEffect(() => {
+    const onPop = () => setPath(`${window.location.pathname}${window.location.search}`);
+    window.addEventListener("popstate", onPop);
+    return () => window.removeEventListener("popstate", onPop);
+  }, []);
+
+  function navigate(nextPath) {
+    window.history.pushState({}, "", nextPath);
+    setPath(`${window.location.pathname}${window.location.search}`);
+    window.scrollTo({ top: 0, behavior: "instant" });
+  }
+
+  return [path, navigate];
+}
 
 export function App() {
+  const [path, navigate] = usePath();
+  const route = path.split("?")[0];
+  const query = new URLSearchParams(path.split("?")[1] || "");
+  const [products, setProducts] = useState(seedProducts);
   const [activeCategory, setActiveCategory] = useState("All Products");
-  const [menuOpen, setMenuOpen] = useState(false);
   const [selectedProduct, setSelectedProduct] = useState(null);
-  const [saved, setSaved] = useState(() => new Set());
-  const [products, setProducts] = useState(initialProducts);
   const [cart, setCart] = useState([]);
-  const [session, setSession] = useState(null);
-  const [loginRole, setLoginRole] = useState("customer");
-  const [loginOpen, setLoginOpen] = useState(false);
-  const [checkoutOpen, setCheckoutOpen] = useState(false);
-  const [orderState, setOrderState] = useState("idle");
-  const [merchantForm, setMerchantForm] = useState({
-    name: "Nord Air Circulator",
-    category: "Appliances",
-    price: "329",
-    stock: "22",
-    note: "Quiet airflow",
-    material: "Compact smart fan with matte graphite shell",
-  });
+  const [customer, setCustomer] = useState(null);
+  const [merchant, setMerchant] = useState(null);
+  const [notice, setNotice] = useState("");
+  const [merchantProducts, setMerchantProducts] = useState([]);
+  const [merchantOrders, setMerchantOrders] = useState([]);
 
-  const liveProducts = products.filter((product) => product.status === "Live");
+  useEffect(() => {
+    loadPublicProducts();
+    api("/api/customer/me").then((data) => setCustomer(data.user)).catch(() => setCustomer(null));
+    api("/api/merchant/me").then((data) => setMerchant(data.user)).catch(() => setMerchant(null));
+  }, []);
+
+  async function loadPublicProducts() {
+    try {
+      const data = await api("/api/products");
+      setProducts(data.products);
+    } catch {
+      setProducts(seedProducts);
+    }
+  }
+
+  async function loadMerchantData() {
+    const [productData, orderData] = await Promise.all([
+      api("/api/merchant/products"),
+      api("/api/merchant/orders"),
+    ]);
+    setMerchantProducts(productData.products);
+    setMerchantOrders(orderData.orders);
+  }
+
   const filteredProducts = useMemo(() => {
-    const source = activeCategory === "All Products"
-      ? liveProducts
-      : liveProducts.filter((product) => product.category === activeCategory);
-    return source;
-  }, [activeCategory, liveProducts]);
+    if (activeCategory === "All Products") return products;
+    return products.filter((product) => product.category === activeCategory);
+  }, [activeCategory, products]);
 
   const cartItems = cart
     .map((item) => {
@@ -181,36 +186,22 @@ export function App() {
       return product ? { ...product, quantity: item.quantity } : null;
     })
     .filter(Boolean);
-
   const cartCount = cartItems.reduce((sum, item) => sum + item.quantity, 0);
   const subtotal = cartItems.reduce((sum, item) => sum + item.price * item.quantity, 0);
   const shipping = subtotal > 0 ? 180 : 0;
   const total = subtotal + shipping;
 
-  function toggleSaved(productName) {
-    setSaved((current) => {
-      const next = new Set(current);
-      if (next.has(productName)) {
-        next.delete(productName);
-      } else {
-        next.add(productName);
-      }
-      return next;
-    });
-  }
-
   function addToCart(productId) {
     setCart((current) => {
-      const existing = current.find((item) => item.productId === productId);
-      if (existing) {
+      const found = current.find((item) => item.productId === productId);
+      if (found) {
         return current.map((item) =>
-          item.productId === productId
-            ? { ...item, quantity: item.quantity + 1 }
-            : item,
+          item.productId === productId ? { ...item, quantity: item.quantity + 1 } : item,
         );
       }
       return [...current, { productId, quantity: 1 }];
     });
+    setNotice("Added to bag.");
   }
 
   function changeQuantity(productId, direction) {
@@ -225,138 +216,226 @@ export function App() {
     );
   }
 
-  function loginAs(role) {
-    setSession({
-      role,
-      name: role === "merchant" ? "Atelier Merchant" : "Private Client",
+  async function customerLogin(values, mode) {
+    const endpoint = mode === "register" ? "/api/customer/register" : "/api/customer/login";
+    const data = await api(endpoint, {
+      method: "POST",
+      body: JSON.stringify(values),
     });
-    setLoginOpen(false);
+    setCustomer(data.user);
+    setNotice(mode === "register" ? "Account created." : "Welcome back.");
+    navigate(query.get("next") || "/checkout");
   }
 
-  function updateStock(productId, direction) {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === productId
-          ? { ...product, stock: Math.max(0, product.stock + direction) }
-          : product,
-      ),
-    );
-  }
-
-  function toggleStatus(productId) {
-    setProducts((current) =>
-      current.map((product) =>
-        product.id === productId
-          ? { ...product, status: product.status === "Live" ? "Hidden" : "Live" }
-          : product,
-      ),
-    );
-  }
-
-  function addMerchantProduct(event) {
-    event.preventDefault();
-    const nextProduct = {
-      id: `merchant-${Date.now()}`,
-      name: merchantForm.name,
-      category: merchantForm.category,
-      price: Number(merchantForm.price) || 0,
-      note: merchantForm.note,
-      image: asset("assets/product-purifier.png"),
-      material: merchantForm.material,
-      stock: Number(merchantForm.stock) || 0,
-      status: "Live",
-    };
-    setProducts((current) => [nextProduct, ...current]);
-    setMerchantForm({
-      name: "",
-      category: "Appliances",
-      price: "",
-      stock: "",
-      note: "",
-      material: "",
+  async function merchantLogin(values) {
+    const data = await api("/api/merchant/login", {
+      method: "POST",
+      body: JSON.stringify(values),
     });
+    setMerchant(data.user);
+    setNotice("Merchant portal unlocked.");
+    await loadMerchantData();
+    navigate("/merchant/dashboard");
   }
 
-  function completePayment(event) {
-    event.preventDefault();
-    setOrderState("processing");
-    window.setTimeout(() => {
-      setOrderState("paid");
-      setCart([]);
-    }, 700);
+  async function logout(role) {
+    await api(role === "merchant" ? "/api/merchant/logout" : "/api/customer/logout", { method: "POST" });
+    if (role === "merchant") setMerchant(null);
+    if (role === "customer") setCustomer(null);
+    navigate(role === "merchant" ? "/merchant/login" : "/");
+  }
+
+  async function placeOrder(provider) {
+    if (!customer) {
+      navigate("/account/register?next=/checkout");
+      return;
+    }
+    if (!cartItems.length) {
+      setNotice("Your bag is empty.");
+      return;
+    }
+    const orderData = await api("/api/customer/orders", {
+      method: "POST",
+      body: JSON.stringify({
+        items: cartItems.map((item) => ({ productId: item.id, quantity: item.quantity })),
+      }),
+    });
+    const paymentData = await api("/api/payments/checkout", {
+      method: "POST",
+      body: JSON.stringify({ orderId: orderData.order.id, provider }),
+    });
+    setCart([]);
+    if (paymentData.payment.checkoutUrl) {
+      window.location.href = paymentData.payment.checkoutUrl;
+    } else {
+      setNotice("Test checkout created. Add Stripe keys to enable real card payment.");
+      navigate("/account/orders");
+    }
+  }
+
+  async function saveMerchantProduct(values) {
+    await api("/api/merchant/products", {
+      method: "POST",
+      body: JSON.stringify(values),
+    });
+    setNotice("Product published.");
+    await loadMerchantData();
+    await loadPublicProducts();
+  }
+
+  async function updateMerchantProduct(productId, patch) {
+    await api(`/api/merchant/products/${productId}`, {
+      method: "PUT",
+      body: JSON.stringify(patch),
+    });
+    await loadMerchantData();
+    await loadPublicProducts();
+  }
+
+  let page = null;
+  if (route.startsWith("/merchant")) {
+    page = (
+      <MerchantShell
+        route={route}
+        merchant={merchant}
+        products={merchantProducts}
+        orders={merchantOrders}
+        onLogin={merchantLogin}
+        onLogout={() => logout("merchant")}
+        onLoad={loadMerchantData}
+        onSaveProduct={saveMerchantProduct}
+        onUpdateProduct={updateMerchantProduct}
+        navigate={navigate}
+      />
+    );
+  } else if (route === "/account/login" || route === "/account/register") {
+    page = (
+      <CustomerAuthPage
+        mode={route.endsWith("register") ? "register" : "login"}
+        onSubmit={customerLogin}
+        navigate={navigate}
+      />
+    );
+  } else if (route === "/account/orders") {
+    page = <OrdersPage customer={customer} navigate={navigate} onLogout={() => logout("customer")} />;
+  } else if (route === "/checkout") {
+    page = (
+      <CheckoutPage
+        customer={customer}
+        cartItems={cartItems}
+        subtotal={subtotal}
+        shipping={shipping}
+        total={total}
+        onQuantity={changeQuantity}
+        onOrder={placeOrder}
+        navigate={navigate}
+      />
+    );
+  } else {
+    page = (
+      <Storefront
+        customer={customer}
+        products={filteredProducts}
+        activeCategory={activeCategory}
+        setActiveCategory={setActiveCategory}
+        onSelect={setSelectedProduct}
+        onCart={addToCart}
+        navigate={navigate}
+      />
+    );
   }
 
   return (
     <main className="site-shell">
-      <header className="topbar">
-        <a href="#top" className="brand" aria-label="Atelier Living Glass home">
-          <span>ATELIER</span>
-          <small>LIVING GLASS</small>
-        </a>
-        <nav className={menuOpen ? "nav nav-open" : "nav"} aria-label="Primary">
-          <a href="#collection">Furniture</a>
-          <a href="#collection">Appliances</a>
-          <a href="#commerce">Commerce</a>
-          <a href="#merchant">Merchant</a>
-          <a href="#spaces">Spaces</a>
-          <a href="#craft">Materials</a>
-        </nav>
-        <div className="utility">
-          <button className="text-button" type="button" onClick={() => setLoginOpen(true)}>
-            {session ? session.name : "Login"}
-          </button>
-          {session ? (
-            <button className="text-button" type="button" onClick={() => setSession(null)}>
-              Sign out
-            </button>
-          ) : null}
-          <button className="bag-button" type="button" onClick={() => setCheckoutOpen(true)}>
-            Bag <span>{cartCount}</span>
-          </button>
-          <button
-            className="menu-button"
-            type="button"
-            onClick={() => setMenuOpen((open) => !open)}
-            aria-expanded={menuOpen}
-          >
-            Menu
-          </button>
-        </div>
-      </header>
+      {!route.startsWith("/merchant") ? (
+        <PublicTopbar customer={customer} cartCount={cartCount} navigate={navigate} onLogout={() => logout("customer")} />
+      ) : null}
+      {notice ? (
+        <button className="notice-toast" type="button" onClick={() => setNotice("")}>
+          {notice}
+        </button>
+      ) : null}
+      {page}
+      {selectedProduct ? (
+        <ProductDrawer product={selectedProduct} onClose={() => setSelectedProduct(null)} onCart={addToCart} />
+      ) : null}
+    </main>
+  );
+}
 
+function PublicTopbar({ customer, cartCount, navigate, onLogout }) {
+  const [menuOpen, setMenuOpen] = useState(false);
+  return (
+    <header className="topbar">
+      <button className="brand brand-button" type="button" onClick={() => navigate("/")}>
+        <span>ATELIER</span>
+        <small>LIVING GLASS</small>
+      </button>
+      <nav className={menuOpen ? "nav nav-open" : "nav"} aria-label="Primary">
+        <button type="button" onClick={() => navigate("/")}>Store</button>
+        <a href="/#collection">Products</a>
+        <a href="/#spaces">Spaces</a>
+        <a href="/#craft">Materials</a>
+        <button type="button" onClick={() => navigate("/account/orders")}>Orders</button>
+      </nav>
+      <div className="utility">
+        {customer ? (
+          <>
+            <button className="text-button" type="button" onClick={() => navigate("/account/orders")}>
+              {customer.name}
+            </button>
+            <button className="text-button" type="button" onClick={onLogout}>Sign out</button>
+          </>
+        ) : (
+          <>
+            <button className="text-button" type="button" onClick={() => navigate("/account/login")}>Login</button>
+            <button className="text-button" type="button" onClick={() => navigate("/account/register")}>Register</button>
+          </>
+        )}
+        <button className="bag-button" type="button" onClick={() => navigate("/checkout")}>
+          Bag <span>{cartCount}</span>
+        </button>
+        <button className="menu-button" type="button" onClick={() => setMenuOpen((open) => !open)}>
+          Menu
+        </button>
+      </div>
+    </header>
+  );
+}
+
+function Storefront({ customer, products, activeCategory, setActiveCategory, onSelect, onCart, navigate }) {
+  return (
+    <>
       <section id="top" className="hero-section">
         <img className="hero-image" src={asset("assets/hero-living-room.png")} alt="Luxury living room with sofa, chair, floor lamp, and small appliances" />
         <div className="hero-shade" />
         <div className="hero-content">
           <div className="hero-copy">
-            <p className="eyebrow">Furniture, appliances, and commerce</p>
+            <p className="eyebrow">Public storefront</p>
             <h1>Design that lives beautifully.</h1>
             <p>
-              A premium home-commerce template with separate customer and merchant
-              journeys, product operations, cart logic, and payment-ready checkout.
+              Browse premium furniture and small appliances freely. When you buy,
+              the store moves you into a protected customer checkout.
             </p>
             <div className="hero-actions">
               <a className="primary-action" href="#collection">Shop collection</a>
-              <a className="secondary-action" href="#merchant">Open merchant console</a>
+              <button className="secondary-action" type="button" onClick={() => navigate(customer ? "/checkout" : "/account/register?next=/checkout")}>
+                Start checkout
+              </button>
             </div>
           </div>
-
-          <aside className="glass-panel hero-panel" aria-label="Commerce status">
-            <p className="panel-label">Live commerce layer</p>
-            <h2>Separate portals for customers and merchants.</h2>
+          <aside className="glass-panel hero-panel" aria-label="Store access rules">
+            <p className="panel-label">Access model</p>
+            <h2>Browse first. Register only when buying.</h2>
             <p>
-              Customers can save items, build a cart, and enter checkout.
-              Merchants can publish products, manage stock, and review order flow.
+              Customers can inspect products without friction. Accounts are required
+              only for checkout, saved orders, payment, and after-sale service.
             </p>
-            <button className="link-button" type="button" onClick={() => setLoginOpen(true)}>
-              Choose login type
-            </button>
             <div className="panel-divider" />
-            <p className="panel-label">Payment status</p>
-            <p className="panel-statement">Demo checkout now. Real payment gateway next.</p>
+            <p className="panel-label">Merchant backend</p>
+            <p className="panel-statement">Separated by URL, cookie, and API role.</p>
           </aside>
         </div>
-
         <div className="category-glass" aria-label="Product categories">
           {categories.map((category) => (
             <button
@@ -371,193 +450,32 @@ export function App() {
         </div>
       </section>
 
-      <section id="commerce" className="commerce-band">
-        <div>
-          <p className="eyebrow">Account structure</p>
-          <h2>Two entrances, one luxury storefront.</h2>
-        </div>
-        <div className="portal-grid">
-          <article className="portal-card">
-            <span>Customer</span>
-            <h3>Browse, save, cart, checkout</h3>
-            <p>Designed for private clients purchasing furniture and compact home appliances.</p>
-            <button type="button" onClick={() => loginAs("customer")}>Enter as customer</button>
-          </article>
-          <article className="portal-card merchant">
-            <span>Merchant</span>
-            <h3>Products, stock, orders</h3>
-            <p>Designed for merchants who need clean catalog control without visual clutter.</p>
-            <button type="button" onClick={() => loginAs("merchant")}>Enter as merchant</button>
-          </article>
-        </div>
-      </section>
-
       <section id="collection" className="section collection-section">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Our collection</p>
-            <h2>Thoughtful pieces for modern living.</h2>
+            <p className="eyebrow">Open catalog</p>
+            <h2>Products are visible before login.</h2>
           </div>
-          <button className="section-link" type="button" onClick={() => setCheckoutOpen(true)}>
-            Review cart
+          <button className="section-link" type="button" onClick={() => navigate("/checkout")}>
+            Review bag
           </button>
         </div>
-
         <div className="product-grid">
-          {filteredProducts.map((product) => (
+          {products.map((product) => (
             <article key={product.id} className="product-card">
-              <button
-                className="save-button"
-                type="button"
-                onClick={() => toggleSaved(product.name)}
-                aria-pressed={saved.has(product.name)}
-              >
-                {saved.has(product.name) ? "Saved" : "Save"}
-              </button>
-              <button className="product-image-button" type="button" onClick={() => setSelectedProduct(product)}>
-                <img src={product.image} alt={product.name} />
+              <button className="product-image-button" type="button" onClick={() => onSelect(product)}>
+                <img src={imageUrl(product.image)} alt={product.name} />
               </button>
               <div className="product-info">
-                <button type="button" onClick={() => setSelectedProduct(product)}>
+                <button type="button" onClick={() => onSelect(product)}>
                   <p>{product.category}</p>
                   <h3>{product.name}</h3>
                   <span>{formatPrice(product.price)}</span>
                   <small>{product.note}</small>
                 </button>
-                <button className="cart-action" type="button" onClick={() => addToCart(product.id)}>
+                <button className="cart-action" type="button" onClick={() => onCart(product.id)}>
                   Add to bag
                 </button>
-              </div>
-            </article>
-          ))}
-        </div>
-      </section>
-
-      <section id="merchant" className="merchant-section">
-        <div className="merchant-header">
-          <div>
-            <p className="eyebrow">Merchant console</p>
-            <h2>Product operations without leaving the brand world.</h2>
-            <p>
-              This prototype shows the merchant journey. Real accounts, database
-              records, and payment webhooks can be wired in the next backend pass.
-            </p>
-          </div>
-          <div className="merchant-status">
-            <span>{session?.role === "merchant" ? "Merchant active" : "Merchant locked"}</span>
-            <button type="button" onClick={() => loginAs("merchant")}>Open merchant mode</button>
-          </div>
-        </div>
-
-        <div className={session?.role === "merchant" ? "merchant-console" : "merchant-console locked"}>
-          <form className="merchant-form" onSubmit={addMerchantProduct}>
-            <h3>Add product</h3>
-            <label>
-              Product name
-              <input
-                value={merchantForm.name}
-                onChange={(event) => setMerchantForm({ ...merchantForm, name: event.target.value })}
-                required
-              />
-            </label>
-            <div className="form-row">
-              <label>
-                Category
-                <select
-                  value={merchantForm.category}
-                  onChange={(event) => setMerchantForm({ ...merchantForm, category: event.target.value })}
-                >
-                  {categories.slice(1).map((category) => (
-                    <option key={category}>{category}</option>
-                  ))}
-                </select>
-              </label>
-              <label>
-                Price
-                <input
-                  type="number"
-                  min="1"
-                  value={merchantForm.price}
-                  onChange={(event) => setMerchantForm({ ...merchantForm, price: event.target.value })}
-                  required
-                />
-              </label>
-            </div>
-            <div className="form-row">
-              <label>
-                Stock
-                <input
-                  type="number"
-                  min="0"
-                  value={merchantForm.stock}
-                  onChange={(event) => setMerchantForm({ ...merchantForm, stock: event.target.value })}
-                  required
-                />
-              </label>
-              <label>
-                Note
-                <input
-                  value={merchantForm.note}
-                  onChange={(event) => setMerchantForm({ ...merchantForm, note: event.target.value })}
-                  required
-                />
-              </label>
-            </div>
-            <label>
-              Material story
-              <textarea
-                value={merchantForm.material}
-                onChange={(event) => setMerchantForm({ ...merchantForm, material: event.target.value })}
-                required
-              />
-            </label>
-            <button type="submit">Publish product</button>
-          </form>
-
-          <div className="inventory-panel">
-            <div className="inventory-head">
-              <h3>Inventory</h3>
-              <span>{products.length} products</span>
-            </div>
-            {products.map((product) => (
-              <article className="inventory-row" key={product.id}>
-                <img src={product.image} alt={product.name} />
-                <div>
-                  <h4>{product.name}</h4>
-                  <p>{product.category} / {formatPrice(product.price)}</p>
-                </div>
-                <div className="stock-control">
-                  <button type="button" onClick={() => updateStock(product.id, -1)}>-</button>
-                  <span>{product.stock}</span>
-                  <button type="button" onClick={() => updateStock(product.id, 1)}>+</button>
-                </div>
-                <button className="status-toggle" type="button" onClick={() => toggleStatus(product.id)}>
-                  {product.status}
-                </button>
-              </article>
-            ))}
-          </div>
-        </div>
-      </section>
-
-      <section id="craft" className="craft-section">
-        <div className="craft-intro">
-          <p className="eyebrow">Design and craftsmanship</p>
-          <h2>Where material meets mastery.</h2>
-          <p>
-            The template uses lifestyle room scenes, isolated product imagery,
-            material macro crops, transparent CGI, and virtual-real composites.
-          </p>
-          <a href="#spaces" className="section-link dark">Discover process</a>
-        </div>
-        <div className="craft-grid">
-          {craftItems.map((item) => (
-            <article className="craft-card" key={item.title}>
-              <img src={item.image} alt={item.title} />
-              <div>
-                <span>{item.step}</span>
-                <h3>{item.title}</h3>
-                <p>{item.copy}</p>
               </div>
             </article>
           ))}
@@ -568,10 +486,7 @@ export function App() {
         <div className="spaces-copy">
           <p className="eyebrow">Space inspiration</p>
           <h2>Spaces that inspire daily.</h2>
-          <p>
-            Curated interiors bring furniture, lighting, and compact appliances
-            together in harmonious, livable scenes.
-          </p>
+          <p>Curated interiors bring furniture, lighting, and compact appliances together in harmonious, livable scenes.</p>
         </div>
         <div className="space-grid">
           {spaces.map((space) => (
@@ -586,154 +501,407 @@ export function App() {
         </div>
       </section>
 
-      <section className="payment-section">
+      <section id="craft" className="payment-section">
         <div>
-          <p className="eyebrow">Payment architecture</p>
-          <h2>Ready for real checkout integration.</h2>
+          <p className="eyebrow">Commercial foundation</p>
+          <h2>Ready for database, roles, orders, and payment.</h2>
         </div>
         <div className="payment-methods">
-          {paymentMethods.map((method) => (
-            <span key={method}>{method}</span>
-          ))}
+          <span>Customer auth</span>
+          <span>Merchant auth</span>
+          <span>D1 products</span>
+          <span>Stripe-ready checkout</span>
         </div>
       </section>
+    </>
+  );
+}
 
-      <footer className="service-strip">
-        {serviceItems.map(([title, copy]) => (
-          <div key={title}>
-            <h3>{title}</h3>
-            <p>{copy}</p>
-          </div>
-        ))}
-      </footer>
+function CustomerAuthPage({ mode, onSubmit, navigate }) {
+  const [form, setForm] = useState({ name: "Private Client", email: "", password: "" });
+  const [error, setError] = useState("");
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await onSubmit(form, mode);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  return (
+    <section className="route-shell auth-layout">
+      <div>
+        <p className="eyebrow">Customer portal</p>
+        <h1>{mode === "register" ? "Create your buying account." : "Welcome back."}</h1>
+        <p className="route-copy">
+          Product browsing stays public. Checkout, payment, and order history require a customer account.
+        </p>
+      </div>
+      <form className="route-card" onSubmit={submit}>
+        {mode === "register" ? (
+          <label>
+            Name
+            <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required />
+          </label>
+        ) : null}
+        <label>
+          Email
+          <input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required />
+        </label>
+        <label>
+          Password
+          <input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} minLength="8" required />
+        </label>
+        {error ? <p className="form-error">{error}</p> : null}
+        <button type="submit">{mode === "register" ? "Register and continue" : "Login and continue"}</button>
+        <button className="ghost-action" type="button" onClick={() => navigate(mode === "register" ? "/account/login" : "/account/register")}>
+          {mode === "register" ? "Already have an account" : "Create account"}
+        </button>
+      </form>
+    </section>
+  );
+}
 
-      {loginOpen ? (
-        <div className="modal-layer" role="dialog" aria-label="Login selection">
-          <div className="login-modal">
-            <button className="drawer-close" type="button" onClick={() => setLoginOpen(false)}>
-              Close
-            </button>
-            <p className="eyebrow">Secure access</p>
-            <h2>Choose your portal.</h2>
-            <div className="role-switch">
-              <button
-                className={loginRole === "customer" ? "active" : ""}
-                type="button"
-                onClick={() => setLoginRole("customer")}
-              >
-                Customer
-              </button>
-              <button
-                className={loginRole === "merchant" ? "active" : ""}
-                type="button"
-                onClick={() => setLoginRole("merchant")}
-              >
-                Merchant
-              </button>
-            </div>
-            <form onSubmit={(event) => { event.preventDefault(); loginAs(loginRole); }}>
-              <label>
-                Email
-                <input type="email" defaultValue={loginRole === "merchant" ? "merchant@atelier.demo" : "client@atelier.demo"} />
-              </label>
-              <label>
-                Password
-                <input type="password" defaultValue="demo-access" />
-              </label>
-              <button type="submit">
-                Continue as {loginRole === "merchant" ? "merchant" : "customer"}
-              </button>
-            </form>
-          </div>
+function CheckoutPage({ customer, cartItems, subtotal, shipping, total, onQuantity, onOrder, navigate }) {
+  const [provider, setProvider] = useState("stripe");
+  const [error, setError] = useState("");
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await onOrder(provider);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  if (!customer) {
+    return (
+      <section className="route-shell auth-required">
+        <p className="eyebrow">Checkout locked</p>
+        <h1>Register before purchase.</h1>
+        <p className="route-copy">
+          You can browse products without an account. To buy, create a customer login first.
+        </p>
+        <div className="route-actions">
+          <button className="primary-action" type="button" onClick={() => navigate("/account/register?next=/checkout")}>Register to buy</button>
+          <button className="secondary-action" type="button" onClick={() => navigate("/account/login?next=/checkout")}>Customer login</button>
         </div>
-      ) : null}
-
-      {checkoutOpen ? (
-        <div className="modal-layer" role="dialog" aria-label="Checkout">
-          <div className="checkout-modal">
-            <button className="drawer-close" type="button" onClick={() => setCheckoutOpen(false)}>
-              Close
-            </button>
-            <p className="eyebrow">Checkout</p>
-            <h2>{orderState === "paid" ? "Order confirmed." : "Complete your order."}</h2>
-            {orderState === "paid" ? (
-              <div className="success-panel">
-                <p>Your demo payment was accepted. A real gateway can be attached through Stripe, WeChat Pay, or Alipay in the backend phase.</p>
-                <button type="button" onClick={() => { setOrderState("idle"); setCheckoutOpen(false); }}>
-                  Return to store
-                </button>
-              </div>
-            ) : (
-              <div className="checkout-grid">
-                <div className="cart-list">
-                  {cartItems.length ? cartItems.map((item) => (
-                    <article className="cart-row" key={item.id}>
-                      <img src={item.image} alt={item.name} />
-                      <div>
-                        <h3>{item.name}</h3>
-                        <p>{formatPrice(item.price)}</p>
-                        <div className="stock-control">
-                          <button type="button" onClick={() => changeQuantity(item.id, -1)}>-</button>
-                          <span>{item.quantity}</span>
-                          <button type="button" onClick={() => changeQuantity(item.id, 1)}>+</button>
-                        </div>
-                      </div>
-                    </article>
-                  )) : (
-                    <div className="empty-cart">
-                      <p>Your bag is empty.</p>
-                      <button type="button" onClick={() => setCheckoutOpen(false)}>Browse products</button>
-                    </div>
-                  )}
+      </section>
+    );
+  }
+  return (
+    <section className="route-shell checkout-page">
+      <div>
+        <p className="eyebrow">Customer checkout</p>
+        <h1>Secure purchase flow.</h1>
+        <p className="route-copy">Orders are created in D1, then passed to the payment layer.</p>
+      </div>
+      <div className="checkout-grid">
+        <div className="cart-list">
+          {cartItems.length ? cartItems.map((item) => (
+            <article className="cart-row" key={item.id}>
+              <img src={imageUrl(item.image)} alt={item.name} />
+              <div>
+                <h3>{item.name}</h3>
+                <p>{formatPrice(item.price)}</p>
+                <div className="stock-control">
+                  <button type="button" onClick={() => onQuantity(item.id, -1)}>-</button>
+                  <span>{item.quantity}</span>
+                  <button type="button" onClick={() => onQuantity(item.id, 1)}>+</button>
                 </div>
-                <form className="payment-form" onSubmit={completePayment}>
-                  <label>
-                    Payment method
-                    <select defaultValue="Card checkout">
-                      {paymentMethods.map((method) => (
-                        <option key={method}>{method}</option>
-                      ))}
-                    </select>
-                  </label>
-                  <label>
-                    Card number
-                    <input inputMode="numeric" placeholder="4242 4242 4242 4242" required={cartItems.length > 0} />
-                  </label>
-                  <div className="total-box">
-                    <span>Subtotal {formatPrice(subtotal)}</span>
-                    <span>Delivery {formatPrice(shipping)}</span>
-                    <strong>Total {formatPrice(total)}</strong>
-                  </div>
-                  <button type="submit" disabled={!cartItems.length || orderState === "processing"}>
-                    {orderState === "processing" ? "Processing" : "Pay demo order"}
-                  </button>
-                </form>
               </div>
-            )}
-          </div>
+            </article>
+          )) : <p className="route-copy">Your bag is empty.</p>}
         </div>
-      ) : null}
+        <form className="payment-form" onSubmit={submit}>
+          <label>
+            Payment method
+            <select value={provider} onChange={(event) => setProvider(event.target.value)}>
+              <option value="stripe">Stripe card checkout</option>
+              <option value="bank">Bank transfer</option>
+              <option value="wechat">WeChat Pay slot</option>
+              <option value="alipay">Alipay slot</option>
+            </select>
+          </label>
+          <div className="total-box">
+            <span>Subtotal {formatPrice(subtotal)}</span>
+            <span>Delivery {formatPrice(shipping)}</span>
+            <strong>Total {formatPrice(total)}</strong>
+          </div>
+          {error ? <p className="form-error">{error}</p> : null}
+          <button type="submit" disabled={!cartItems.length}>Create order and pay</button>
+        </form>
+      </div>
+    </section>
+  );
+}
 
-      {selectedProduct ? (
-        <div className="detail-drawer" role="dialog" aria-label="Selected product details">
-          <img src={selectedProduct.image} alt={selectedProduct.name} />
-          <div>
-            <button className="drawer-close" type="button" onClick={() => setSelectedProduct(null)}>
-              Close
-            </button>
-            <p className="eyebrow">{selectedProduct.category}</p>
-            <h2>{selectedProduct.name}</h2>
-            <p>{selectedProduct.material}</p>
-            <div className="drawer-meta">
-              <span>{formatPrice(selectedProduct.price)}</span>
-              <small>{selectedProduct.note}</small>
-            </div>
-            <button className="cart-action drawer-cart" type="button" onClick={() => addToCart(selectedProduct.id)}>
-              Add to bag
-            </button>
-          </div>
+function OrdersPage({ customer, navigate, onLogout }) {
+  const [orders, setOrders] = useState([]);
+  useEffect(() => {
+    if (customer) api("/api/customer/orders").then((data) => setOrders(data.orders)).catch(() => setOrders([]));
+  }, [customer]);
+  if (!customer) {
+    return (
+      <section className="route-shell auth-required">
+        <p className="eyebrow">Customer orders</p>
+        <h1>Login to view orders.</h1>
+        <button className="primary-action" type="button" onClick={() => navigate("/account/login")}>Customer login</button>
+      </section>
+    );
+  }
+  return (
+    <section className="route-shell">
+      <div className="route-head">
+        <div>
+          <p className="eyebrow">Customer account</p>
+          <h1>Your orders.</h1>
         </div>
-      ) : null}
-    </main>
+        <button className="secondary-action" type="button" onClick={onLogout}>Sign out</button>
+      </div>
+      <div className="inventory-panel order-panel">
+        {orders.length ? orders.map((order) => (
+          <article className="order-row" key={order.id}>
+            <div>
+              <h3>{order.id}</h3>
+              <p>{order.status}</p>
+            </div>
+            <strong>{formatPrice(order.total)}</strong>
+          </article>
+        )) : <p className="route-copy">No orders yet.</p>}
+      </div>
+    </section>
+  );
+}
+
+function MerchantShell({ route, merchant, products, orders, onLogin, onLogout, onLoad, onSaveProduct, onUpdateProduct, navigate }) {
+  useEffect(() => {
+    if (merchant) onLoad().catch(() => {});
+  }, [merchant]);
+
+  if (!merchant) {
+    return <MerchantLoginPage onLogin={onLogin} />;
+  }
+
+  return (
+    <section className="merchant-app">
+      <aside className="merchant-sidebar">
+        <button className="brand brand-button" type="button" onClick={() => navigate("/merchant/dashboard")}>
+          <span>ATELIER</span>
+          <small>MERCHANT</small>
+        </button>
+        <nav>
+          <button type="button" onClick={() => navigate("/merchant/dashboard")}>Dashboard</button>
+          <button type="button" onClick={() => navigate("/merchant/products")}>Products</button>
+          <button type="button" onClick={() => navigate("/merchant/orders")}>Orders</button>
+          <button type="button" onClick={onLogout}>Sign out</button>
+        </nav>
+      </aside>
+      {route === "/merchant/products" ? (
+        <MerchantProducts products={products} onSave={onSaveProduct} onUpdate={onUpdateProduct} />
+      ) : route === "/merchant/orders" ? (
+        <MerchantOrders orders={orders} />
+      ) : (
+        <MerchantDashboard products={products} orders={orders} merchant={merchant} navigate={navigate} />
+      )}
+    </section>
+  );
+}
+
+function MerchantLoginPage({ onLogin }) {
+  const [form, setForm] = useState({ email: "merchant@atelier.demo", password: "" });
+  const [error, setError] = useState("");
+  async function submit(event) {
+    event.preventDefault();
+    setError("");
+    try {
+      await onLogin(form);
+    } catch (err) {
+      setError(err.message);
+    }
+  }
+  return (
+    <section className="merchant-login">
+      <div>
+        <p className="eyebrow">Private merchant URL</p>
+        <h1>Merchant backend is separated.</h1>
+        <p className="route-copy">
+          This portal uses a merchant-only cookie and merchant-only API routes.
+          Customer accounts cannot access it.
+        </p>
+      </div>
+      <form className="route-card" onSubmit={submit}>
+        <label>
+          Merchant email
+          <input type="email" value={form.email} onChange={(event) => setForm({ ...form, email: event.target.value })} required />
+        </label>
+        <label>
+          Password
+          <input type="password" value={form.password} onChange={(event) => setForm({ ...form, password: event.target.value })} required />
+        </label>
+        {error ? <p className="form-error">{error}</p> : null}
+        <button type="submit">Enter merchant backend</button>
+      </form>
+    </section>
+  );
+}
+
+function MerchantDashboard({ products, orders, merchant, navigate }) {
+  const liveCount = products.filter((product) => product.status === "Live").length;
+  const stock = products.reduce((sum, product) => sum + Number(product.stock || 0), 0);
+  const revenue = orders.reduce((sum, order) => sum + Number(order.total || 0), 0);
+  return (
+    <div className="merchant-main">
+      <p className="eyebrow">Merchant dashboard</p>
+      <h1>Welcome, {merchant.name}.</h1>
+      <div className="metric-grid">
+        <Metric label="Live products" value={liveCount} />
+        <Metric label="Total stock" value={stock} />
+        <Metric label="Orders" value={orders.length} />
+        <Metric label="Revenue" value={formatPrice(revenue)} />
+      </div>
+      <div className="route-actions">
+        <button className="primary-action" type="button" onClick={() => navigate("/merchant/products")}>Manage products</button>
+        <button className="secondary-action" type="button" onClick={() => navigate("/merchant/orders")}>View orders</button>
+      </div>
+    </div>
+  );
+}
+
+function Metric({ label, value }) {
+  return (
+    <article className="metric-card">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </article>
+  );
+}
+
+function MerchantProducts({ products, onSave, onUpdate }) {
+  const [form, setForm] = useState({
+    name: "Nord Air Circulator",
+    category: "Appliances",
+    price: "329",
+    stock: "22",
+    note: "Quiet airflow",
+    material: "Compact smart fan with matte graphite shell",
+    image: "/assets/product-purifier.png",
+  });
+  async function submit(event) {
+    event.preventDefault();
+    await onSave(form);
+    setForm({ ...form, name: "", price: "", stock: "", note: "", material: "" });
+  }
+  return (
+    <div className="merchant-main two-column">
+      <form className="merchant-form" onSubmit={submit}>
+        <p className="eyebrow">Products</p>
+        <h2>Add product</h2>
+        <label>
+          Product name
+          <input value={form.name} onChange={(event) => setForm({ ...form, name: event.target.value })} required />
+        </label>
+        <div className="form-row">
+          <label>
+            Category
+            <select value={form.category} onChange={(event) => setForm({ ...form, category: event.target.value })}>
+              {categories.slice(1).map((category) => <option key={category}>{category}</option>)}
+            </select>
+          </label>
+          <label>
+            Price
+            <input type="number" min="1" value={form.price} onChange={(event) => setForm({ ...form, price: event.target.value })} required />
+          </label>
+        </div>
+        <div className="form-row">
+          <label>
+            Stock
+            <input type="number" min="0" value={form.stock} onChange={(event) => setForm({ ...form, stock: event.target.value })} required />
+          </label>
+          <label>
+            Image path
+            <input value={form.image} onChange={(event) => setForm({ ...form, image: event.target.value })} required />
+          </label>
+        </div>
+        <label>
+          Note
+          <input value={form.note} onChange={(event) => setForm({ ...form, note: event.target.value })} required />
+        </label>
+        <label>
+          Material story
+          <textarea value={form.material} onChange={(event) => setForm({ ...form, material: event.target.value })} required />
+        </label>
+        <button type="submit">Publish product</button>
+      </form>
+      <div className="inventory-panel">
+        <div className="inventory-head">
+          <h3>Inventory</h3>
+          <span>{products.length} products</span>
+        </div>
+        {products.map((product) => (
+          <article className="inventory-row" key={product.id}>
+            <img src={imageUrl(product.image)} alt={product.name} />
+            <div>
+              <h4>{product.name}</h4>
+              <p>{product.category} / {formatPrice(product.price)}</p>
+            </div>
+            <div className="stock-control">
+              <button type="button" onClick={() => onUpdate(product.id, { stock: Math.max(0, product.stock - 1) })}>-</button>
+              <span>{product.stock}</span>
+              <button type="button" onClick={() => onUpdate(product.id, { stock: product.stock + 1 })}>+</button>
+            </div>
+            <button
+              className="status-toggle"
+              type="button"
+              onClick={() => onUpdate(product.id, { status: product.status === "Live" ? "Hidden" : "Live" })}
+            >
+              {product.status}
+            </button>
+          </article>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function MerchantOrders({ orders }) {
+  return (
+    <div className="merchant-main">
+      <p className="eyebrow">Merchant orders</p>
+      <h1>Order operations.</h1>
+      <div className="inventory-panel order-panel">
+        {orders.length ? orders.map((order) => (
+          <article className="order-row" key={order.id}>
+            <div>
+              <h3>{order.customer_name}</h3>
+              <p>{order.customer_email} / {order.status}</p>
+            </div>
+            <strong>{formatPrice(order.total)}</strong>
+          </article>
+        )) : <p className="route-copy">No customer orders yet.</p>}
+      </div>
+    </div>
+  );
+}
+
+function ProductDrawer({ product, onClose, onCart }) {
+  return (
+    <div className="detail-drawer" role="dialog" aria-label="Selected product details">
+      <img src={imageUrl(product.image)} alt={product.name} />
+      <div>
+        <button className="drawer-close" type="button" onClick={onClose}>Close</button>
+        <p className="eyebrow">{product.category}</p>
+        <h2>{product.name}</h2>
+        <p>{product.material}</p>
+        <div className="drawer-meta">
+          <span>{formatPrice(product.price)}</span>
+          <small>{product.note}</small>
+        </div>
+        <button className="cart-action drawer-cart" type="button" onClick={() => onCart(product.id)}>
+          Add to bag
+        </button>
+      </div>
+    </div>
   );
 }
